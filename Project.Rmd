@@ -1,0 +1,418 @@
+---
+title: "Untitled"
+author: "Graham Miotke"
+date: "12/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Required Packages
+```{r}
+#install.packages("tidyverse", type = "binary")
+#install.packages("ggrepel", type = "binary")
+#install.packages("ggimage", type = "binary")
+#install.packages("nflfastR", type = "binary")
+#install.packages("gsisdecoder")
+#install.packages("ggplot2")
+library(tidyverse, warn.conflicts = FALSE)
+library(ggrepel, warn.conflicts = FALSE)
+library(ggimage, warn.conflicts = FALSE)
+library(nflfastR, warn.conflicts = FALSE)
+library(dplyr, warn.conflicts = FALSE)
+library(nflreadr, warn.conflicts = FALSE)
+#library(nflscrapR, warn.conflicts = FALSE)
+library(ggplot2, warn.conflicts = FALSE)
+# makes R prefer not to display numbers in scientific notation
+options(scipen = 9999)
+```
+
+### Loading all regular season games from 2010 - 2020
+```{r}
+data1 <- load_pbp(2010:2020) %>% 
+  filter(season_type == "REG")
+team_abbr <- c("ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",  "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC", "LA", "LAC", "LV", "MIA", "MIN", "NE", "NYG", "NYJ", "NO", "PHI", "PIT", "TEN", "SEA", "SF", "TB", "WAS")
+################################################################################
+#   QB Drop back plays on 1st and 10 with win probability between 20 and 80% ,
+#   excluding the final 2 minutes of the either half, excluding plays with a 
+#   line of scrimmage between either half's 20 yard line and goal line.
+fd_dropbacks1 <- data1 %>%
+  filter(down==1 & ydstogo==10 & yardline_100<=80 & yardline_100>=20 & qb_dropback==1 & wp>= .20 & wp<= .80 & half_seconds_remaining>120 & !is.na(epa)) %>%
+  select(posteam, season, week, play_id, down, ydstogo, epa, wpa, success, yards_gained, yardline_100)
+################################################################################
+#   Run plays on 1st and 10 under same conditions as fd_dropbacks1
+fd_runs1 <- data1 %>%
+  filter(down==1 & ydstogo==10 & yardline_100<=80 & yardline_100>=20 & 
+         qb_dropback==0 & play_type == "run" & wp>= .20 & wp<= .80 & 
+         half_seconds_remaining>120 & !is.na(epa)) %>%
+  select(posteam, season, week, play_id, down, ydstogo, epa, wpa, success, yards_gained, yardline_100)
+```
+
+### Evaluate by week
+```{r}
+fd_dropbacks_by_week <- fd_dropbacks1 %>%
+  group_by(posteam, season, week)%>% 
+  summarize(
+    epa_fd_dropback = mean(epa),
+    wpa_fd_dropback = mean(wpa),
+    success_rate_fd_dropback = mean(success),
+    yards_per_fd_dropback_play = mean(yards_gained), 
+    fd_dropback_plays = n(), 
+    )  
+#fd_dropbacks_by_week
+fd_runs_by_week <- fd_runs1 %>%
+  group_by(posteam,season,week) %>%
+  summarize(
+    epa_fd_run = mean(epa),
+    wpa_fd_run = mean(wpa),
+    success_rate_fd_run = mean(success),
+    yards_per_fd_run_play = mean(yards_gained),
+    fd_run_plays = n()
+  ) %>%
+  ungroup()
+#fd_runs_by_week
+fd_plays_by_week <- fd_runs_by_week%>%
+  left_join(fd_dropbacks_by_week , by = c('posteam' = 'posteam','season' = 'season', 'week' = 'week')) %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr'))%>%
+  mutate(tot_fd_plays = fd_run_plays + fd_dropback_plays,
+         prop_fd_run_plays = fd_run_plays/tot_fd_plays,
+         prop_fd_QBD_plays = fd_dropback_plays/tot_fd_plays)
+fd_plays_by_week 
+```
+### Weekly Graph
+```{r}
+fd_weekly_team <- fd_plays_by_week %>%
+  filter(season == "2015", posteam == "ARI")
+ 
+  x <- fd_weekly_team$week
+  par(mar = c(5, 4, 4, 4) + 0.3) 
+  plot(x, fd_weekly_team$success_rate_fd_run, type = "l", col = "#97233f", 
+       xlab = "Week", ylab = "Run Success Prob", ylim = c(0,1))
+  par(new = TRUE) 
+  plot(x, fd_weekly_team$prop_fd_run_plays, type = "l", col = "#000000",
+         axes = FALSE, xlab = "", ylab = "", ylim = c(0,1))
+  axis(side = 4)
+  mtext("Prop. of Run Plays", side = 4, line = 3)
+  abline(h = mean(fd_plays_by_week$success_rate_fd_run), col = "#97233f", lty = 2)
+  abline(h = mean(fd_plays_by_week$prop_fd_run_plays), col = "#000000", lty = 2)
+  #Missing values of prop_fd_run_plays, that's why the black line isn't appearing
+```
+
+### Evaluate by season
+```{r}
+### Data for QB drop backs on 1st and 10, grouped by season
+fd_dropbacks_by_year <- fd_dropbacks1 %>%
+  group_by(posteam, season)%>% 
+  summarize(
+    epa_fd_dropback = mean(epa),
+    wpa_fd_dropback = mean(wpa),
+    success_rate_fd_dropback = mean(success),
+    yards_per_fd_dropback_play = mean(yards_gained), 
+    fd_dropback_plays = n(),
+    avg_yds_to_go_dropback = mean(yardline_100)
+    ) %>%
+  ungroup()
+fd_dropbacks_by_year
+### Data for runs on 1st and 10, grouped by season
+fd_runs_by_year <- fd_runs1 %>%
+  group_by(posteam, season)%>% 
+  summarize(
+    epa_fd_run = mean(epa),
+    wpa_fd_run = mean(wpa),
+    success_rate_fd_run = mean(success),
+    yards_per_fd_run_play = mean(yards_gained),
+    fd_run_plays = n(),
+    avg_yds_to_go_run = mean(yardline_100)
+    ) %>%
+  ungroup()
+fd_runs_by_year
+### Data for both QB dropbacks and run plays on 1st and 10, grouped by season
+fd_plays_by_year <- fd_runs_by_year%>%
+  left_join(fd_dropbacks_by_year , by = c('posteam' = 'posteam','season' = 'season')) %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr'))%>%
+  mutate(tot_fd_plays = fd_run_plays + fd_dropback_plays,
+         prop_fd_run_plays = fd_run_plays/tot_fd_plays,
+         prop_fd_QBD_plays = fd_dropback_plays/tot_fd_plays)
+fd_plays_by_year
+```
+
+### 2015
+```{r}
+fd_plays_2015 <- fd_plays_by_year %>%
+  filter(season == 2015) 
+run_epa_2015 <- fd_plays_2015 %>%
+  ggplot(aes(x = prop_fd_run_plays, y = epa_fd_run)) +
+  #horizontal line with mean epa on runs
+  geom_hline(yintercept = mean(fd_plays_2015$epa_fd_run),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean proportion of play calls being a run
+  geom_vline(xintercept = mean(fd_plays_2015$prop_fd_run_plays),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = fd_plays_2015$success_rate_fd_dropback / 9, asp = 16 / 9) +
+  #add names using ggrepel, which tries to make them not overlap
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Prop. of Run Playcalls", 
+       y = "EPA per Run on 1st & 10",
+       title = "Run Play Efficiency on 1st Down, 2015",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10))
+run_epa_2015
+QBD_epa_2015 <- fd_plays_2015 %>%
+  ggplot(aes(x = prop_fd_QBD_plays, y = epa_fd_dropback)) +
+  #horizontal line with mean epa on dropbacks
+  geom_hline(yintercept = mean(fd_plays_2015$epa_fd_dropback),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean proportion of play calls being a QBD
+  geom_vline(xintercept = mean(fd_plays_2015$prop_fd_QBD_plays),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  geom_image(aes(image = team_logo_espn), size = fd_plays_2015$success_rate_fd_dropback / 9, asp = 16 / 9) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Prop. of QBD Playcalls", 
+       y = "EPA per QBD on 1st & 10",
+       title = "QB Drop Back Efficiency on 1st Down, 2015",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10))
+QBD_epa_2015
+```
+
+### 2010 - 2020
+```{r}
+## Data for both QB dropbacks and run plays on 1st and 10 from 2010-2020
+fd_plays_all_yrs <- fd_plays_by_year%>%
+  group_by(posteam)%>%
+  summarize(
+    epa_fd_run = mean(epa_fd_run),
+    wpa_fd_run = mean(wpa_fd_run),
+    success_rate_fd_run = mean(success_rate_fd_run),
+    yards_per_fd_run_play = mean(yards_per_fd_run_play),
+    fd_run_plays = sum(fd_run_plays),
+    epa_fd_dropback = mean(epa_fd_dropback),
+    wpa_fd_dropback = mean(wpa_fd_dropback),
+    success_rate_fd_dropback = mean(success_rate_fd_dropback),
+    yards_per_fd_dropback_play = mean(yards_per_fd_dropback_play), 
+    fd_dropback_plays = sum(fd_dropback_plays),
+    tot_fd_plays = fd_run_plays + fd_dropback_plays,
+         prop_fd_run_plays = fd_run_plays/tot_fd_plays,
+         prop_fd_QBD_plays = fd_dropback_plays/tot_fd_plays
+    
+    ) %>%
+  ungroup()
+## Run epa graph from 2010-2020
+fd_run_epa_all_years <- fd_plays_all_yrs %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr')) %>%
+  ggplot(aes(x = prop_fd_run_plays, y = epa_fd_run)) +
+  #horizontal line with mean epa on runs
+  geom_hline(yintercept = mean(fd_plays_all_yrs$epa_fd_run),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean proportion of play calls being a run
+  geom_vline(xintercept = mean(fd_plays_all_yrs$prop_fd_run_plays),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = fd_plays_all_yrs$success_rate_fd_run / 7, asp = 16 / 9) +
+  #add names using ggrepel, which tries to make them not overlap
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Prop. of Run Playcalls", 
+       y = "EPA per Run on 1st & 10",
+       title = "Run Play Efficiency on 1st Down, 2010-2020",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_smooth(method = "lm")
+fd_run_epa_all_years
+## QBD epa graph from 2010-2020
+fd_QBD_epa_all_years <- fd_plays_all_yrs %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr')) %>%
+  ggplot(aes(x = prop_fd_QBD_plays, y = epa_fd_dropback)) +
+  #horizontal line with mean epa on QBD
+  geom_hline(yintercept = mean(fd_plays_all_yrs$epa_fd_dropback),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean proportion of play calls being a QBD
+  geom_vline(xintercept = mean(fd_plays_all_yrs$prop_fd_QBD_plays),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = fd_plays_all_yrs$success_rate_fd_dropback / 10, asp = 16/9) +
+  #add names using ggrepel, which tries to make them not overlap
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Prop. of QBD Playcalls", 
+       y = "EPA per QBD on 1st & 10",
+       title = "QBD Efficiency on 1st Down, 2010-2020",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_smooth(method = "lm")
+fd_QBD_epa_all_years
+## Run success graph from 2010-2020
+fd_run_success_all_years <- fd_plays_all_yrs %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr')) %>%
+  ggplot(aes(x = prop_fd_run_plays, y = success_rate_fd_run)) +
+  #horizontal line with mean success on runs
+  geom_hline(yintercept = mean(fd_plays_all_yrs$success_rate_fd_run),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean proportion of play calls being a run
+  geom_vline(xintercept = mean(fd_plays_all_yrs$prop_fd_run_plays),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = fd_plays_all_yrs$success_rate_fd_run / 7, asp = 16 / 9) +
+  #add names using ggrepel, which tries to make them not overlap
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Prop. of Run Playcalls", 
+       y = "Success Prob. per Run on 1st & 10",
+       title = "Run Success Rate on 1st Down, 2010-2020",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_smooth(method = "lm")
+fd_run_success_all_years
+## QBD Success graph from 2010-2020
+fd_QBD_success_all_years <- fd_plays_all_yrs %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr')) %>%
+  ggplot(aes(x = prop_fd_QBD_plays, y = success_rate_fd_dropback)) +
+  #horizontal line with mean success on QBD
+  geom_hline(yintercept = mean(fd_plays_all_yrs$success_rate_fd_dropback),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean proportion of play calls being a QBD
+  geom_vline(xintercept = mean(fd_plays_all_yrs$prop_fd_QBD_plays),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = fd_plays_all_yrs$success_rate_fd_dropback / 10, asp = 16/9) +
+  #add names using ggrepel, which tries to make them not overlap
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Prop. of QBD Playcalls", 
+       y = "Success Prob. per QBD on 1st & 10",
+       title = "QBD Success Rate on 1st Down, 2010-2020",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  geom_smooth(method = "lm")
+fd_QBD_success_all_years
+```
+
+### Data for league averages, includes downs 1:3
+```{r}
+league_run_averages <- data1 %>%
+  filter(down==1:3 & ydstogo>=5 & ydstogo<=10 & yardline_100<=80 & yardline_100>=20 & qb_scramble==0 & play_type == "run" & wp>=.20 & wp <= .80
+         & half_seconds_remaining>120 & !is.na(epa)) %>%
+  group_by(season) %>%
+  summarize(
+    league_epa_run = mean(epa),
+    league_wpa_run = mean(wpa),
+    league_success_rate_run = mean(success),
+    league_yards_per_run_play = mean(yards_gained),
+    league_run_plays = n()
+  ) %>%
+  ungroup()
+league_run_averages
+league_QBD_averages <- data1 %>%
+  filter(down==1:3 & ydstogo>=5 & ydstogo<=10 & yardline_100<=80 & yardline_100>=20 & play_type == "pass" & wp>=.20 & wp <= .80
+         & half_seconds_remaining>120 & !is.na(epa)) %>%
+  group_by(season) %>%
+  summarize(
+    league_epa_QBD = mean(epa),
+    league_wpa_QBD = mean(wpa),
+    league_success_rate_QBD = mean(success),
+    league_yards_per_QBD_play = mean(yards_gained),
+    league_QBD_plays = n()
+  ) %>%
+  ungroup()
+league_QBD_averages
+data2 <- fd_plays_by_year %>%
+  left_join(league_run_averages, by = "season") %>%
+  left_join(league_QBD_averages, by = "season")
+data2 <- data2 %>%
+  mutate(fd_QBD_ygoe = yards_per_fd_dropback_play - league_yards_per_QBD_play,
+         fd_run_ygoe = yards_per_fd_run_play - league_yards_per_run_play,
+         fd_epa_total = ((epa_fd_run * fd_run_plays) + (epa_fd_dropback * fd_dropback_plays)/2)
+         )
+data3 <- data2 %>%
+  group_by(posteam)%>%
+  summarize(
+    fd_QBD_ygoe = mean(fd_QBD_ygoe),
+    fd_run_ygoe = mean(fd_run_ygoe),
+    fd_epa_total = mean(fd_epa_total),
+    success_rate_fd_dropback = mean(success_rate_fd_dropback),
+    success_rate_fd_run = mean(success_rate_fd_run),
+    
+  )
+fd_QBD_efficiency <- data3 %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr')) %>%
+  ggplot(aes(x = fd_QBD_ygoe, y = fd_epa_total)) +
+  #horizontal line with mean epa on 1st down plays league wide
+  geom_hline(yintercept = mean(data3$fd_epa_total),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean ygoe for QBD play calls
+  geom_vline(xintercept = mean(data3$fd_QBD_ygoe),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = data3$success_rate_fd_dropback / 9, asp = 16 / 9) +
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Yards gained over expected (YGOE)", 
+       y = "EPA per 1st Down",
+       title = "QBD Efficiency on 1st Down, 2010-2020",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+    geom_smooth(method = "lm")
+fd_QBD_efficiency
+fd_run_efficiency <- data3 %>%
+  left_join(teams_colors_logos , by = c('posteam' = 'team_abbr')) %>%
+  ggplot(aes(x = fd_run_ygoe, y = fd_epa_total)) +
+  #horizontal line with mean epa on 1st down plays league wide
+  geom_hline(yintercept = mean(data3$fd_epa_total),
+            color = "red", linetype = "dashed", alpha=0.5) +
+  #vertical line with mean ygoe for run play calls
+  geom_vline(xintercept = mean(data3$fd_run_ygoe),
+             color = "red", linetype = "dashed", alpha=0.5) +
+  #add points for the teams with the right logos
+  geom_image(aes(image = team_logo_espn), size = data3$success_rate_fd_run / 7, asp = 16 / 9) +
+  #geom_text_repel(aes(label=posteam)) +
+  stat_smooth(geom = 'line', alpha = 0.5, se = FALSE, method = 'lm') +
+  labs(x = "Yards gained over expected (YGOE)", 
+       y = "EPA per 1st Down",
+       title = "Run Efficiency on 1st Down, 2010-2020",
+       caption = "Data: @nflfastR") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, face = "bold")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+    geom_smooth(method = "lm")
+fd_run_efficiency
+```
+
+```{r}
+fit_nfl_success_rate_run = lm(success_rate_fd_run ~ prop_fd_run_plays + fd_run_ygoe +avg_yds_to_go_run, data = data2)
+summary(fit_nfl_success_rate_run)
+
+fit_nfl_epa = lm(epa_fd_run ~ fd_run_ygoe+prop_fd_run_plays+yards_per_fd_run_play+ avg_yds_to_go_run, data = data2)
+summary(fit_nfl_epa)
+
+fit_nfl_success_rate_pass = lm(success_rate_fd_dropback ~ prop_fd_QBD_plays + fd_QBD_ygoe + avg_yds_to_go_dropback, data = data2)
+summary(fit_nfl_success_rate_pass)
+
+fit_nfl_epa_pass = lm(epa_fd_dropback ~ prop_fd_QBD_plays + fd_QBD_ygoe + yards_per_fd_dropback_play + success_rate_fd_dropback + avg_yds_to_go_dropback , data = data2)
+summary(fit_nfl_epa_pass)
+```
